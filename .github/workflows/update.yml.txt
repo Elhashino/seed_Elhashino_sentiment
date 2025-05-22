@@ -1,0 +1,30 @@
+name: Hourly Sentiment Update
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # every hour at minute 0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install transformers pandas
+
+      - name: Run sentiment updater
+        run: python update_sentiment.py
+
+      - name: Commit updated CSV
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add SPY.csv
+          git commit -m "Hourly sentiment update"
+          git push
