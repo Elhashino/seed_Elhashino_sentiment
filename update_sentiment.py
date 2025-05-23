@@ -26,10 +26,15 @@ def fetch_all_texts_for(sym):
     return texts
 
 def compute_sentiment(texts):
-    # TODO: replace with your real scoring (HF or OpenAI)
+    # 1) (Optional) filter out any very short texts
     cleaned = [t for t in texts if len(t) > 20]
-    scores = [0.0 for _ in cleaned]  # placeholder = zero sentiment
-    return sum(scores)/len(scores) if scores else 0.0
+
+    # 2) Stub scoring: give every cleaned text a score of 0.1
+    scores = [0.1 for _ in cleaned]  # temporary non-zero placeholder
+
+    # 3) Return the average (or 0.1 if there were no texts)
+    return sum(scores) / len(scores) if scores else 0.1
+
 
 def main():
     now_ms = int(time.time() * 1000)
