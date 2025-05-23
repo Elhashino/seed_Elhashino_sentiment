@@ -13,8 +13,8 @@ import pandas as pd
 
 # 1) List your 10 symbols here
 SYMBOLS = [
-  "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
-  "XAUUSD","CL","BTCUSD","SPY","AAPL"
+    "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
+    "XAUUSD","CL","BTCUSD","SPY","AAPL"
 ]
 
 def fetch_all_texts_for(sym):
@@ -35,16 +35,20 @@ def compute_sentiment(texts):
     # 3) Return the average (or 0.1 if there were no texts)
     return sum(scores) / len(scores) if scores else 0.1
 
-
 def main():
-    now_ms = int(time.time() * 1000)
+    # Align timestamp to the start of the current hour
+    now_s  = time.time() // 3600 * 3600
+    now_ms = int(now_s * 1000)
+
     for sym in SYMBOLS:
         texts = fetch_all_texts_for(sym)
         score = compute_sentiment(texts)
         df = pd.DataFrame([{
-            "time": now_ms,
-            "open": score, "high": score,
-            "low":  score, "close": score
+            "time":  now_ms,
+            "open":  score,
+            "high":  score,
+            "low":   score,
+            "close": score
         }])
         df.to_csv(f"{sym}.csv", index=False)
         print(f"Wrote {sym}.csv → {score:.3f}")
