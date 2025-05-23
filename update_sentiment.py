@@ -13,8 +13,8 @@ import pandas as pd
 
 # 1) List your 10 symbols here
 SYMBOLS = [
-    "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
-    "XAUUSD","CL","BTCUSD","SPY","AAPL"
+    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
+    "XAUUSD", "CL",     "BTCUSD", "SPY",    "AAPL"
 ]
 
 def fetch_all_texts_for(sym):
@@ -26,7 +26,7 @@ def fetch_all_texts_for(sym):
     return texts
 
 def compute_sentiment(texts):
-    # 1) (Optional) filter out any very short texts
+    # 1) (Optional) filter out very short texts
     cleaned = [t for t in texts if len(t) > 20]
 
     # 2) Stub scoring: give every cleaned text a score of 0.1
@@ -36,13 +36,18 @@ def compute_sentiment(texts):
     return sum(scores) / len(scores) if scores else 0.1
 
 def main():
-    # Align timestamp to the start of the current hour
-    now_s  = time.time() // 3600 * 3600
-    now_ms = int(now_s * 1000)
+    # 1) get current UNIX time in seconds
+    now_s = int(time.time())
+    # 2) floor down to the start of this hour
+    hour_start_s = (now_s // 3600) * 3600
+    # 3) convert to milliseconds
+    now_ms = hour_start_s * 1000
 
     for sym in SYMBOLS:
         texts = fetch_all_texts_for(sym)
         score = compute_sentiment(texts)
+
+        # Build a one-row DataFrame with the floored timestamp
         df = pd.DataFrame([{
             "time":  now_ms,
             "open":  score,
@@ -50,6 +55,8 @@ def main():
             "low":   score,
             "close": score
         }])
+
+        # Write out the CSV for TradingView to pick up
         df.to_csv(f"{sym}.csv", index=False)
         print(f"Wrote {sym}.csv → {score:.3f}")
 
