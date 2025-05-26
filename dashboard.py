@@ -1,42 +1,53 @@
-import glob
-import pandas as pd
+# dashboard.py
+
+import os
+from dotenv import load_dotenv
+
 import streamlit as st
-import altair as alt
+import pandas as pd
+import matplotlib.pyplot as plt
 
-# 1) Find all your CSVs in this folder
-csv_paths = glob.glob("*.csv")
+# ─── load our .env keys (even if we don't use them here) ──────────────────────
+load_dotenv()
 
-# 2) Read the latest sentiment from each
-rows = []
-for path in csv_paths:
-    sym = path.replace(".csv", "")
-    df = pd.read_csv(path)
-    latest = df["close"].iloc[-1] if not df.empty else None
-    rows.append({"symbol": sym, "sentiment": latest})
+# ─── PAGE LAYOUT ──────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="AI Sentiment Dashboard",
+    layout="wide"
+)
 
-sent_df = pd.DataFrame(rows).dropna()
-
-# 3) Page header
 st.title("📊 AI Sentiment Dashboard")
 st.markdown("Hourly sentiment scores for each symbol")
 
-# 4) Bar chart of sentiments
-chart = (
-    alt.Chart(sent_df)
-    .mark_bar()
-    .encode(
-        x=alt.X("symbol:N", sort=None, title="Symbol"),
-        y=alt.Y("sentiment:Q", title="Sentiment"),
-        color=alt.condition(
-            alt.datum.sentiment >= 0,
-            alt.value("green"),
-            alt.value("red")
-        )
-    )
-    .properties(width=700, height=400)
-)
-st.altair_chart(chart, use_container_width=True)
+# ─── LOAD LATEST SCORES ───────────────────────────────────────────────────────
+SYMBOLS = [
+  "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
+  "XAUUSD","CL","BTCUSD","SPY","AAPL"
+]
 
-# 5) Show the raw table if needed
+data = {}
+for sym in SYMBOLS:
+    fn = f"{sym}.csv"
+    if os.path.exists(fn):
+        df = pd.read_csv(fn)
+        # take the last row's 'close' as the current sentiment
+        data[sym] = df["close"].iloc[-1]
+    else:
+        data[sym] = None
+
+scores = pd.Series(data, name="Sentiment").sort_index()
+
+# ─── PLOT BAR CHART ───────────────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(10, 4))
+scores.plot(kind="bar", ax=ax)
+ax.set_ylim(0, 1)                   # since our stub scores are between 0–1
+ax.set_ylabel("Sentiment")
+ax.set_xlabel("Symbol")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+
+st.pyplot(fig)
+
+# ─── RAW DATA EXPANDER ────────────────────────────────────────────────────────
 with st.expander("Show raw data"):
-    st.dataframe(sent_df.set_index("symbol"))
+    st.dataframe(scores.to_frame())
