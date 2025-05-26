@@ -1,6 +1,29 @@
-# Stub fetch functions so the script runs even without real APIs:
+# update_sentiment.py
+
+import time
+import pandas as pd
+from transformers import pipeline
+
+# 1) List your 10 symbols here
+SYMBOLS = [
+    "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
+    "XAUUSD","CL","BTCUSD","SPY","AAPL"
+]
+
+# 2) Initialize HF sentiment pipeline (CPU)
+nlp = pipeline(
+    "sentiment-analysis",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    device=-1               # -1 = CPU
+)
+
+# 3) Dummy fetch functions for testing
 def fetch_twitter_posts(token, query):
-    return []
+    # Temporary test data: mix of positive & negative
+    return [
+        "I love EURUSD, it's going to the moon!",
+        "EURUSD is terrible right now, I'm so bearish."
+    ]
 
 def fetch_reddit_comments(client_id, client_secret, subreddit):
     return []
@@ -8,46 +31,31 @@ def fetch_reddit_comments(client_id, client_secret, subreddit):
 def fetch_stocktwits_messages(symbol):
     return []
 
-import time
-import pandas as pd
-
-# 1) List your 10 symbols here
-SYMBOLS = [
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-    "XAUUSD", "CL",     "BTCUSD", "SPY",    "AAPL"
-]
-
 def fetch_all_texts_for(sym):
-    # Call stub fetchers directly; no env vars needed
     texts = []
     texts += fetch_twitter_posts(None, f"{sym} OR ${sym}")
     texts += fetch_reddit_comments(None, None, sym)
     texts += fetch_stocktwits_messages(sym)
     return texts
 
+# 4) Compute sentiment: batch through the HF pipeline, convert to signed floats
 def compute_sentiment(texts):
-    # 1) (Optional) filter out very short texts
     cleaned = [t for t in texts if len(t) > 20]
+    if not cleaned:
+        return 0.0
+    results = nlp(cleaned, truncation=True, batch_size=16)
+    signed = [
+        (r["score"] if r["label"] == "POSITIVE" else -r["score"])
+        for r in results
+    ]
+    return sum(signed) / len(signed)
 
-    # 2) Stub scoring: give every cleaned text a score of 0.1
-    scores = [0.1 for _ in cleaned]  # temporary non-zero placeholder
-
-    # 3) Return the average (or 0.1 if there were no texts)
-    return sum(scores) / len(scores) if scores else 0.1
-
+# 5) Main: write one CSV per symbol
 def main():
-    # 1) get current UNIX time in seconds
-    now_s = int(time.time())
-    # 2) floor down to the start of this hour
-    hour_start_s = (now_s // 3600) * 3600
-    # 3) convert to milliseconds
-    now_ms = hour_start_s * 1000
-
+    now_ms = int(time.time() * 1000)
     for sym in SYMBOLS:
         texts = fetch_all_texts_for(sym)
         score = compute_sentiment(texts)
-
-        # Build a one-row DataFrame with the floored timestamp
         df = pd.DataFrame([{
             "time":  now_ms,
             "open":  score,
@@ -55,10 +63,9 @@ def main():
             "low":   score,
             "close": score
         }])
-
-        # Write out the CSV for TradingView to pick up
-        df.to_csv(f"{sym}.csv", index=False)
-        print(f"Wrote {sym}.csv → {score:.3f}")
+        fname = f"{sym}.csv"
+        df.to_csv(fname, index=False)
+        print(f"Wrote {fname} → {score:.3f}")
 
 if __name__ == "__main__":
     main()
