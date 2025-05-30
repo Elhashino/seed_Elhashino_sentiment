@@ -1,110 +1,175 @@
+#!/usr/bin/env python3
 # update_sentiment.py
 
 import os
+import csv
 import time
-import pandas as pd
-from dotenv import load_dotenv
-from transformers import pipeline
-import tweepy
-from tweepy.errors import TooManyRequests, BadRequest
+import datetime
+import logging
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 
-# ─── 1) Load API keys ─────────────────────────────────────────────────────────
-load_dotenv()
-TW_BEARER      = os.getenv("TWITTER_BEARER_TOKEN", "")
-REDDIT_ID      = os.getenv("REDDIT_CLIENT_ID", "")
-REDDIT_SECRET  = os.getenv("REDDIT_CLIENT_SECRET", "")
-STOCKTWITS_KEY = os.getenv("STOCKTWITS_API_KEY", "")
+# -------------------------------------------------------------------
+# LOGGING
+# -------------------------------------------------------------------
 
-# ─── 2) Initialize clients ────────────────────────────────────────────────────
-client = tweepy.Client(bearer_token=TW_BEARER)
-# (We'll stub Reddit + StockTwits until you add credentials)
-nlp    = pipeline(
-    "sentiment-analysis",
-    model="distilbert-base-uncased-finetuned-sst-2-english",
-    device=-1
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(message)s",
+    level=logging.INFO
 )
 
-# ─── 3) Your symbols ──────────────────────────────────────────────────────────
+# -------------------------------------------------------------------
+# CONFIGURATION
+# -------------------------------------------------------------------
+
 SYMBOLS = [
-    "EURUSD","USDJPY","GBPUSD","AUDUSD","USDCAD",
-    "XAUUSD","CL","BTCUSD","SPY","AAPL"
+    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD",
+    "USDCAD", "XAUUSD", "CL", "BTC-USD", "SPY", "AAPL"
 ]
+OUTPUT_CSV = "sentiment_scores.csv"
+MAX_ITEMS   = 30  # how many headlines/posts per source
 
-def get_last_score(symbol):
-    """Read last 'close' from SYMBOL.csv or return neutral 0.5."""
-    fn = f"{symbol}.csv"
-    if not os.path.exists(fn):
-        return 0.5
-    df = pd.read_csv(fn)
-    return df["close"].iloc[-1]
+# -------------------------------------------------------------------
+# DATA FETCHERS
+# -------------------------------------------------------------------
 
-def fetch_all_tweets(symbols, max_results=100):
-    """
-    Single call: search for ANY of the symbols in one query,
-    then bucket the returned Tweets by symbol.
-    """
-    query = "(" + " OR ".join(symbols) + ") lang:en -is:retweet -is:reply"
+def fetch_google_news(symbol, max_items=MAX_ITEMS):
+    """Google News RSS"""
+    url = f"https://news.google.com/rss/search?q={symbol}+forex&hl=en-US&gl=US&ceid=US:en"
+    d = feedparser.parse(url)
+    texts = []
+    for e in d.entries[:max_items]:
+        summary = getattr(e, "summary", "")
+        texts.append(e.title + (" — " + summary if summary else ""))
+    return texts
+
+def fetch_reuters_fx(max_items=MAX_ITEMS):
+    """Reuters Forex RSS (no symbol filter)"""
+    url = "https://www.reutersagency.com/feed/?best-topics=forex"
+    d = feedparser.parse(url)
+    texts = []
+    for e in d.entries[:max_items]:
+        summary = getattr(e, "summary", "")
+        texts.append(e.title + (" — " + summary if summary else ""))
+    return texts
+
+def fetch_bing_news(symbol, max_items=MAX_ITEMS):
+    """Bing News RSS"""
+    url = f"https://www.bing.com/news/search?q={symbol}+forex&format=rss"
+    d = feedparser.parse(url)
+    texts = []
+    for e in d.entries[:max_items]:
+        summary = getattr(e, "description", "")
+        texts.append(e.title + (" — " + summary if summary else ""))
+    return texts
+
+def fetch_yahoo_finance(symbol, max_items=MAX_ITEMS):
+    """Yahoo Finance RSS for symbol"""
+    url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?region=US&lang=en-US&symbol={symbol}"
+    d = feedparser.parse(url)
+    texts = []
+    for e in d.entries[:max_items]:
+        summary = getattr(e, "summary", "")
+        texts.append(e.title + (" — " + summary if summary else ""))
+    return texts
+
+def fetch_reddit(symbol, max_items=MAX_ITEMS):
+    """Pushshift Reddit submissions from last 24h"""
+    one_day_ago = int((datetime.datetime.utcnow() - datetime.timedelta(days=1)).timestamp())
+    url = "https://api.pushshift.io/reddit/search/submission/"
+    params = {"q": symbol, "subreddit": "forex,investing,stocks", "after": one_day_ago, "size": max_items}
     try:
-        resp = client.search_recent_tweets(query=query, max_results=max_results)
-        texts = [t.text for t in resp.data or []]
-    except TooManyRequests:
-        print("Twitter rate‐limit hit. Skipping new Tweets.")
-        texts = []
-    except BadRequest as e:
-        print(f"Twitter bad request: {e}")
-        texts = []
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json().get("data", [])
+    except Exception as e:
+        logging.warning(f"fetch_reddit failed for {symbol}: {e}")
+        return []
+    texts = []
+    for post in data:
+        title   = post.get("title", "")
+        selftxt = post.get("selftext", "")
+        if title:
+            texts.append(title + (" — " + selftxt if selftxt else ""))
+    return texts
 
-    buckets = {sym: [] for sym in symbols}
-    for txt in texts:
-        for sym in symbols:
-            if sym in txt or f"#{sym}" in txt:
-                buckets[sym].append(txt)
-    return buckets
+def fetch_investing(symbol, max_items=MAX_ITEMS):
+    """Investing.com search results"""
+    url = f"https://www.investing.com/search/?q={symbol}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select(".searchSection .js-article-item")[:max_items]
+        return [it.get_text(separator=" — ", strip=True) for it in items]
+    except Exception as e:
+        logging.warning(f"fetch_investing failed for {symbol}: {e}")
+        return []
+
+# -------------------------------------------------------------------
+# SENTIMENT ANALYSIS (FinBERT-Tone)
+# -------------------------------------------------------------------
+
+MODEL_NAME = "yiyanghkust/finbert-tone"
+tokenizer  = AutoTokenizer.from_pretrained(MODEL_NAME)
+model      = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+
+nlp = pipeline(
+    "sentiment-analysis",
+    model=model,
+    tokenizer=tokenizer,
+    device=-1  # CPU
+)
 
 def compute_sentiment(texts):
-    """
-    Run HF sentiment on a list of texts, return average signed score.
-    POSITIVE → +score, NEGATIVE → -score.
-    """
-    cleaned = [t for t in texts if len(t) > 20]
+    cleaned = [t.replace("\n", " ").strip() for t in texts if t.strip()]
     if not cleaned:
-        return None
-    results = nlp(cleaned, truncation=True, batch_size=16)
-    scores = [
-        (r["score"] if r["label"]=="POSITIVE" else -r["score"])
-        for r in results
-    ]
-    return sum(scores)/len(scores)
+        return 0.0, 0
+
+    results = nlp(
+        cleaned,
+        truncation=True,
+        padding=True,
+        max_length=512,
+        batch_size=16
+    )
+
+    label2score = {"negative": -1.0, "neutral": 0.0, "positive": +1.0}
+    scores = []
+    for r in results:
+        lbl = r["label"].lower()
+        sc  = r["score"] * label2score.get(lbl, 0.0)
+        scores.append(sc)
+
+    return sum(scores) / len(scores), len(scores)
+
+# -------------------------------------------------------------------
+# MAIN
+# -------------------------------------------------------------------
 
 def main():
-    now_ms      = int(time.time() * 1000)
-    tweets_buckets = fetch_all_tweets(SYMBOLS, max_results=100)
+    first = not os.path.exists(OUTPUT_CSV)
+    with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if first:
+            writer.writerow(["timestamp", "symbol", "sentiment_score", "num_texts"])
 
-    for sym in SYMBOLS:
-        texts = tweets_buckets.get(sym, [])
+        for sym in SYMBOLS:
+            logging.info(f"→ Scoring {sym} …")
+            texts = []
+            texts += fetch_google_news(sym)
+            texts += fetch_reuters_fx()          # no sym argument
+            texts += fetch_bing_news(sym)
+            texts += fetch_yahoo_finance(sym)
+            texts += fetch_reddit(sym)
+            texts += fetch_investing(sym)
 
-        # ─── Optional: add Reddit & StockTwits when ready ─────────
-        # texts += fetch_reddit_comments(sym)
-        # texts += fetch_stocktwits_messages(sym)
-
-        new_score = compute_sentiment(texts)
-        if new_score is None:
-            score = get_last_score(sym)
-            print(f"No new Tweets for {sym}; using last score {score:.3f}")
-        else:
-            score = new_score
-
-        # ─── Write out one‐row CSV ────────────────────────────────
-        df = pd.DataFrame([{
-            "time":  now_ms,
-            "open":  score,
-            "high":  score,
-            "low":   score,
-            "close": score
-        }])
-        filename = f"{sym}.csv"
-        df.to_csv(filename, index=False)
-        print(f"Wrote {filename} → {score:.3f}")
+            score, count = compute_sentiment(texts)
+            ts = datetime.datetime.utcnow().isoformat()
+            writer.writerow([ts, sym, f"{score:.3f}", count])
+            logging.info(f"   {sym}: {score:.3f} from {count} texts")
+            time.sleep(1.0)
 
 if __name__ == "__main__":
     main()
