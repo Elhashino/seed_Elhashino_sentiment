@@ -1,42 +1,57 @@
+# ────────────────────────────────────────────────────────────────────────
 # .github/workflows/update.yml
+# “Hourly Sentiment Update” – runs update_sentiment.py every hour (or on
+# manual dispatch), writes/updates sentiment CSVs, then commits them back.
+# ────────────────────────────────────────────────────────────────────────
+
 name: Hourly Sentiment Update
 
 on:
+  #  Run on a cron schedule (every hour on the hour)
   schedule:
-    - cron: '0 * * * *'    # every hour on the hour
-  workflow_dispatch:      # allow manual run from the Actions tab
+    - cron: '0 * * * *'
+  #  Allow manual “Run workflow” from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Check out your repository
-      - name: Checkout repo
+      # ───── 1) Check out the repository ───────────────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2) Set up Python 3.x
+      # ───── 2) Set up Python 3.x ─────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
-      # 3) Install all dependencies from your requirements.txt
-      #    (make sure requirements.txt is at the same level as update_sentiment.py)
+      # ───── 3) Install dependencies from requirements.txt ─────────────────────
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4) Run the sentiment‐updater script
+      # ───── 4) Run the sentiment-updater script ───────────────────────────────
       - name: Run sentiment updater
+        # If update_sentiment.py writes/updates any CSVs (for example: sentiment_scores.csv),
+        # this step will create or modify those files in your workspace.
         run: python update_sentiment.py
 
-      # 5) Commit any changed CSV files back to the repo
+      # ───── 5) Commit & push any newly created/updated CSV files ──────────────
       - name: Commit updated CSVs
         run: |
+          # Set a Git user so that the bot can commit
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- '*.csv'
-          git commit -m "hourly: update sentiment CSV" || echo "No changes to commit"
+
+          # Stage any .csv files (if they exist). If none exist, echo a notice.
+          git add -- '*.csv' || echo "No CSV files to add"
+
+          # Only attempt to commit if there are staged changes
+          git diff --cached --quiet || git commit -m "hourly: update sentiment CSV"
+
+          # Push the commit back to the repo
           git push
