@@ -1,76 +1,54 @@
 # dashboard.py
+# ───────────────────────────────────────────────────────────────────
+# A Streamlit app that reads “sentiment_scores.csv” and shows
+# the most recent sentiment for each symbol as a bar chart.
+# ───────────────────────────────────────────────────────────────────
 
 import os
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-# ─── 1) Must be the first Streamlit command ──────────────────────────────────
+# ─── 1) PAGE CONFIG ────────────────────────────────────────────────
 st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
-
-# ─── 2) Load & preprocess ────────────────────────────────────────────────────
-@st.cache_data
-def load_data(path):
-    if not os.path.exists(path):
-        # create an empty DataFrame with the right columns
-        return pd.DataFrame(columns=["timestamp","symbol","sentiment_score","num_texts"])
-    df = pd.read_csv(path, parse_dates=["timestamp"])
-    df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
-    return df
-
-CSV_FILE = "sentiment_scores.csv"
-df = load_data(CSV_FILE)
-
 st.title("AI Sentiment Dashboard")
-st.write("Latest sentiment score per symbol (from your `update_sentiment.py`)")
+st.write("This shows the latest FinBERT sentiment for each symbol.")
 
-if df.empty:
-    st.warning("No data found in sentiment_scores.csv yet.")
+# ─── 2) LOAD THE CSV ───────────────────────────────────────────────
+if not os.path.exists("sentiment_scores.csv"):
+    st.error("No sentiment_scores.csv found. Run update_sentiment first.")
     st.stop()
 
-# ─── 3) Extract latest per symbol ─────────────────────────────────────────────
-latest = (
-    df
-    .sort_values("timestamp")
-    .groupby("symbol", as_index=False)
-    .last()[["symbol","sentiment_score","num_texts","timestamp"]]
-    .sort_values("sentiment_score", ascending=False)
-)
+df = pd.read_csv("sentiment_scores.csv", parse_dates=["timestamp"])
 
-# ─── 4) Bar chart ─────────────────────────────────────────────────────────────
-fig, ax = plt.subplots(figsize=(10,4))
-colors = ["green" if v>=0 else "red" for v in latest["sentiment_score"]]
-ax.bar(latest["symbol"], latest["sentiment_score"], color=colors)
+# ─── 3) GET THE LATEST SCORE PER SYMBOL ────────────────────────────
+latest_rows = (
+    df.sort_values("timestamp", ascending=False)
+      .groupby("symbol", as_index=False)
+      .first()
+)
+# latest_rows now has columns: [symbol, timestamp, sentiment_score, num_texts]
+
+# ─── 4) PLOT A BAR CHART ───────────────────────────────────────────
+symbols = latest_rows["symbol"]
+scores  = latest_rows["sentiment_score"].astype(float)
+colors  = ["green" if s >= 0 else "red" for s in scores]
+
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.bar(symbols, scores, color=colors)
 ax.set_xlabel("Symbol")
 ax.set_ylabel("Sentiment Score")
-ax.set_title("Most Recent Sentiment per Symbol")
-mx = max(abs(latest["sentiment_score"].min()), abs(latest["sentiment_score"].max()))
-ax.set_ylim(-mx*1.1, mx*1.1)
+ax.set_title("Latest FinBERT Sentiment by Symbol")
+max_abs = max(abs(scores.min()), abs(scores.max()))
+margin  = max_abs * 0.1
+ax.set_ylim(-max_abs - margin, max_abs + margin)
 ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+
 plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
+
 st.pyplot(fig)
 
-# ─── 5) Show raw table ────────────────────────────────────────────────────────
-with st.expander("Show raw latest scores"):
-    st.dataframe(
-        latest.rename(columns={
-            "sentiment_score":"score",
-            "num_texts":"count",
-            "timestamp":"last_updated"
-        }),
-        use_container_width=True
-    )
-
-# ─── 6) Optional history ──────────────────────────────────────────────────────
-if st.checkbox("Show full time-series history"):
-    symbol = st.selectbox("Pick a symbol", latest["symbol"].tolist())
-    sub = df[df["symbol"] == symbol].sort_values("timestamp")
-    fig2, ax2 = plt.subplots(figsize=(10,3))
-    ax2.plot(sub["timestamp"], sub["sentiment_score"], marker="o")
-    ax2.set_ylabel("Sentiment")
-    ax2.set_xlabel("Time")
-    ax2.set_title(f"{symbol} Sentiment Over Time")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(fig2)
+# ─── 5) SHOW RAW DATA IF REQUESTED ─────────────────────────────────
+with st.expander("Show raw sentiment data"):
+    st.dataframe(df, use_container_width=True)
