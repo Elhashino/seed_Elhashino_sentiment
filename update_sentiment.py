@@ -1,9 +1,9 @@
 # update_sentiment.py
 # ────────────────────────────────────────────────────────────────────
-# Pulls news/reddit/Investing.com text, runs FinBERT sentiment,
+# Pulls news/Reuters/Reddit/Investing.com text, runs FinBERT sentiment,
 # and appends the timestamped scores into "sentiment_scores.csv".
 #
-# Usage: just run “python update_sentiment.py” (it writes/appends a CSV).
+# Usage: just run "python update_sentiment.py" (it writes/appends a CSV).
 # The GitHub Action will do that every hour automatically.
 # ────────────────────────────────────────────────────────────────────
 
@@ -129,11 +129,13 @@ def main():
         if first:
             writer.writerow(["timestamp", "symbol", "sentiment_score", "num_texts"])
 
+        reuters_texts = fetch_reuters_fx()
+
         for sym in SYMBOLS:
             print(f"→ Scoring {sym} …")
             texts = []
             texts += fetch_google_news(sym)
-            texts += fetch_reuters_fx()
+            texts += reuters_texts
             texts += fetch_reddit(sym)
             texts += fetch_investing(sym)
 

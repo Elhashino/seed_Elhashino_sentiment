@@ -16,7 +16,7 @@ st.write("This shows the latest FinBERT sentiment for each symbol.")
 
 # ─── 2) LOAD THE CSV ───────────────────────────────────────────────
 if not os.path.exists("sentiment_scores.csv"):
-    st.error("No sentiment_scores.csv found. Run update_sentiment first.")
+    st.error("No sentiment_scores.csv found. Run `update_sentiment.py` first.")
     st.stop()
 
 df = pd.read_csv("sentiment_scores.csv", parse_dates=["timestamp"])
