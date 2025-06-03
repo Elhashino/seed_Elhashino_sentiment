@@ -7,4 +7,9 @@ Thumbs.db
 .vscode/
 .idea/
 .env
+
+# ───– Ignore all CSVs by default ───────────────────────────────────────
 *.csv
+
+# ───– But do NOT ignore our one “master” file ─────────────────────────
+!sentiment_scores.csv

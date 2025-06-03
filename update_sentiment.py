@@ -1,11 +1,5 @@
+#!/usr/bin/env python3
 # update_sentiment.py
-# ────────────────────────────────────────────────────────────────────
-# Pulls news/reddit/Investing.com text, runs FinBERT sentiment,
-# and appends the timestamped scores into "sentiment_scores.csv".
-#
-# Usage: just run “python update_sentiment.py” (it writes/appends a CSV).
-# The GitHub Action will do that every hour automatically.
-# ────────────────────────────────────────────────────────────────────
 
 import os
 import csv
@@ -16,7 +10,10 @@ import requests
 from bs4 import BeautifulSoup
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 
-# ─── 1) CONFIGURATION ───────────────────────────────────────────────
+# -------------------------------------------------------------------
+# CONFIGURATION
+# -------------------------------------------------------------------
+
 SYMBOLS = [
     "EURUSD", "USDJPY", "GBPUSD", "AUDUSD",
     "USDCAD", "XAUUSD", "CL", "BTCUSD", "SPY", "AAPL"
@@ -24,7 +21,10 @@ SYMBOLS = [
 OUTPUT_CSV = "sentiment_scores.csv"
 MAX_ITEMS = 30
 
-# ─── 2) DATA FETCHERS ────────────────────────────────────────────────
+# -------------------------------------------------------------------
+# DATA FETCHERS
+# -------------------------------------------------------------------
+
 def fetch_google_news(symbol, max_items=MAX_ITEMS):
     url = f"https://news.google.com/rss/search?q={symbol}+forex&hl=en-US&gl=US&ceid=US:en"
     d = feedparser.parse(url)
@@ -35,17 +35,13 @@ def fetch_google_news(symbol, max_items=MAX_ITEMS):
     return texts
 
 def fetch_reuters_fx(max_items=MAX_ITEMS):
-    try:
-        url = "https://www.reutersagency.com/feed/?best-topics=forex"
-        d = feedparser.parse(url)
-        texts = []
-        for entry in d.entries[:max_items]:
-            summary = getattr(entry, "summary", "")
-            texts.append(entry.title + (" — " + summary if summary else ""))
-        return texts
-    except Exception as e:
-        # if Reuters fails, just return an empty list
-        return []
+    url = "https://www.reutersagency.com/feed/?best-topics=forex"
+    d = feedparser.parse(url)
+    texts = []
+    for entry in d.entries[:max_items]:
+        summary = getattr(entry, "summary", "")
+        texts.append(entry.title + (" — " + summary if summary else ""))
+    return texts
 
 def fetch_reddit(symbol, max_items=MAX_ITEMS):
     one_day_ago = int(
@@ -58,12 +54,8 @@ def fetch_reddit(symbol, max_items=MAX_ITEMS):
         "after": one_day_ago,
         "size": max_items
     }
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json().get("data", [])
-    except Exception:
-        return []
-
+    r = requests.get(url, params=params, timeout=10)
+    data = r.json().get("data", [])
     texts = []
     for post in data:
         title = post.get("title", "")
@@ -75,18 +67,19 @@ def fetch_reddit(symbol, max_items=MAX_ITEMS):
 def fetch_investing(symbol, max_items=MAX_ITEMS):
     url = f"https://www.investing.com/search/?q={symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        items = soup.select(".searchSection .js-article-item")[:max_items]
-        return [it.get_text(separator=" — ", strip=True) for it in items]
-    except Exception:
-        return []
+    r = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select(".searchSection .js-article-item")[:max_items]
+    return [it.get_text(separator=" — ", strip=True) for it in items]
 
-# ─── 3) SENTIMENT MODEL (FinBERT) ───────────────────────────────────
+# -------------------------------------------------------------------
+# SENTIMENT ANALYSIS
+# -------------------------------------------------------------------
+
+# Load FinBERT tone model
 MODEL_NAME = "yiyanghkust/finbert-tone"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model     = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
 nlp = pipeline(
     "sentiment-analysis",
@@ -100,6 +93,7 @@ def compute_sentiment(texts):
     if not cleaned:
         return 0.0, 0
 
+    # batch inferences with truncation and padding
     results = nlp(
         cleaned,
         truncation=True,
@@ -108,20 +102,25 @@ def compute_sentiment(texts):
         batch_size=16
     )
 
+    # FinBERT labels are 'negative' / 'neutral' / 'positive'
     label2score = {
         "negative": -1.0,
         "neutral":   0.0,
         "positive": +1.0
     }
+
     scores = []
     for r in results:
-        lbl = r["label"].lower()  # “negative” / “neutral” / “positive”
+        lbl = r["label"].lower()
         sc  = r["score"] * label2score.get(lbl, 0.0)
         scores.append(sc)
 
     return sum(scores) / len(scores), len(scores)
 
-# ─── 4) MAIN LOOP ────────────────────────────────────────────────────
+# -------------------------------------------------------------------
+# MAIN
+# -------------------------------------------------------------------
+
 def main():
     first = not os.path.exists(OUTPUT_CSV)
     with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:
@@ -140,7 +139,7 @@ def main():
             score, count = compute_sentiment(texts)
             ts = datetime.datetime.utcnow().isoformat()
             writer.writerow([ts, sym, f"{score:.3f}", count])
-            print(f"   {sym}: {score:.3f} (from {count} texts)")
+            print(f"   {sym}: {score:.3f} from {count} texts")
             time.sleep(1.0)
 
 if __name__ == "__main__":

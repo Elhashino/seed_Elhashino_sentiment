@@ -1,17 +1,18 @@
 # .github/workflows/update.yml
+
 name: Hourly Sentiment Update
 
 on:
   schedule:
-    - cron: '0 * * * *'    # run every hour, on the hour
-  workflow_dispatch:      # also allow manual “Run workflow” clicks
+    - cron: '0 * * * *'    # every hour on the hour
+  workflow_dispatch:      # allow manual run from the Actions tab
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Check out your repository so the action can read/write files
+      # 1) Check out the repository
       - name: Checkout repo
         uses: actions/checkout@v3
 
@@ -21,21 +22,22 @@ jobs:
         with:
           python-version: '3.x'
 
-      # 3) Install dependencies from requirements.txt
+      # 3) Install all dependencies from requirements.txt
+      #    (make sure requirements.txt is at the same level as update_sentiment.py)
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4) Run the update_sentiment.py script
+      # 4) Run the sentiment‐updater script
       - name: Run sentiment updater
         run: python update_sentiment.py
 
-      # 5) Commit any changed CSV files back to the repo
+      # 5) Commit any changed sentiment_scores.csv back to the repo
       - name: Commit updated CSVs
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add sentiment_scores.csv
+          git add -f sentiment_scores.csv
           git commit -m "hourly: update sentiment CSV" || echo "No changes to commit"
           git push
