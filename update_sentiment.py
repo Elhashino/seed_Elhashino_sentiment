@@ -10,20 +10,22 @@ import requests
 from bs4 import BeautifulSoup
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 
-# -------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
-# -------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 SYMBOLS = [
     "EURUSD", "USDJPY", "GBPUSD", "AUDUSD",
     "USDCAD", "XAUUSD", "CL", "BTCUSD", "SPY", "AAPL"
 ]
 OUTPUT_CSV = "sentiment_scores.csv"
-MAX_ITEMS = 30
 
-# -------------------------------------------------------------------
+# Bump this up to 60 or even 80 if you want more “chances” to catch a non-neutral headline.
+MAX_ITEMS = 60
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DATA FETCHERS
-# -------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_google_news(symbol, max_items=MAX_ITEMS):
     url = f"https://news.google.com/rss/search?q={symbol}+forex&hl=en-US&gl=US&ceid=US:en"
@@ -35,7 +37,8 @@ def fetch_google_news(symbol, max_items=MAX_ITEMS):
     return texts
 
 def fetch_reuters_fx(max_items=MAX_ITEMS):
-    url = "https://www.reutersagency.com/feed/?best-topics=forex"
+    # Reuters FX feed
+    url = "https://www.reuters.com/tools/rss?feedName=fxNews"
     d = feedparser.parse(url)
     texts = []
     for entry in d.entries[:max_items]:
@@ -54,8 +57,11 @@ def fetch_reddit(symbol, max_items=MAX_ITEMS):
         "after": one_day_ago,
         "size": max_items
     }
-    r = requests.get(url, params=params, timeout=10)
-    data = r.json().get("data", [])
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json().get("data", [])
+    except Exception:
+        data = []
     texts = []
     for post in data:
         title = post.get("title", "")
@@ -67,19 +73,21 @@ def fetch_reddit(symbol, max_items=MAX_ITEMS):
 def fetch_investing(symbol, max_items=MAX_ITEMS):
     url = f"https://www.investing.com/search/?q={symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers, timeout=10)
-    soup = BeautifulSoup(r.text, "html.parser")
-    items = soup.select(".searchSection .js-article-item")[:max_items]
-    return [it.get_text(separator=" — ", strip=True) for it in items]
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select(".searchSection .js-article-item")[:max_items]
+        return [it.get_text(separator=" — ", strip=True) for it in items]
+    except Exception:
+        return []
 
-# -------------------------------------------------------------------
-# SENTIMENT ANALYSIS
-# -------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# SENTIMENT ANALYSIS (FinBERT)
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Load FinBERT tone model
 MODEL_NAME = "yiyanghkust/finbert-tone"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+model     = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 
 nlp = pipeline(
     "sentiment-analysis",
@@ -89,11 +97,11 @@ nlp = pipeline(
 )
 
 def compute_sentiment(texts):
+    # Clean up and dedupe
     cleaned = [t.replace("\n", " ").strip() for t in texts if t.strip()]
     if not cleaned:
         return 0.0, 0
 
-    # batch inferences with truncation and padding
     results = nlp(
         cleaned,
         truncation=True,
@@ -102,7 +110,7 @@ def compute_sentiment(texts):
         batch_size=16
     )
 
-    # FinBERT labels are 'negative' / 'neutral' / 'positive'
+    # FinBERT’s labels are 'negative' / 'neutral' / 'positive'
     label2score = {
         "negative": -1.0,
         "neutral":   0.0,
@@ -115,21 +123,28 @@ def compute_sentiment(texts):
         sc  = r["score"] * label2score.get(lbl, 0.0)
         scores.append(sc)
 
-    return sum(scores) / len(scores), len(scores)
+    avg = sum(scores) / len(scores)
 
-# -------------------------------------------------------------------
+    # Optional: If you want to treat tiny averages as exactly zero, uncomment:
+    # if abs(avg) < 0.005:
+    #     avg = 0.0
+
+    return avg, len(scores)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN
-# -------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    first = not os.path.exists(OUTPUT_CSV)
+    first_run = not os.path.exists(OUTPUT_CSV)
     with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        if first:
+        if first_run:
             writer.writerow(["timestamp", "symbol", "sentiment_score", "num_texts"])
 
         for sym in SYMBOLS:
-            print(f"→ Scoring {sym} …")
+            print(f"→ Scoring {sym} …", flush=True)
+
             texts = []
             texts += fetch_google_news(sym)
             texts += fetch_reuters_fx()
@@ -138,9 +153,10 @@ def main():
 
             score, count = compute_sentiment(texts)
             ts = datetime.datetime.utcnow().isoformat()
-            writer.writerow([ts, sym, f"{score:.3f}", count])
-            print(f"   {sym}: {score:.3f} from {count} texts")
-            time.sleep(1.0)
+            writer.writerow([ts, sym, score, count])
+            print(f"   {sym}: {score:.4f} from {count} texts", flush=True)
+
+            time.sleep(1.0)  # be polite to the servers
 
 if __name__ == "__main__":
     main()
