@@ -1,7 +1,8 @@
 # dashboard.py
 # ───────────────────────────────────────────────────────────────────
-# A Streamlit app that reads “sentiment_scores.csv” and shows
-# the most recent FinBERT sentiment for each symbol as a bar chart.
+# A Streamlit app that reads “sentiment_scores.csv” (with columns
+#   timestamp,symbol,sentiment_score,num_texts)
+# and plots the latest FinBERT sentiment for each symbol as a bar chart.
 # ───────────────────────────────────────────────────────────────────
 
 import os
@@ -10,23 +11,22 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 # ─── 1) PAGE CONFIG ────────────────────────────────────────────────
-# Must be the first Streamlit command
+# Must be the first Streamlit command in your script
 st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 
 # ─── 2) LOAD & PREPROCESS ─────────────────────────────────────────
 @st.cache_data
 def load_data(path):
     """
-    Loads the CSV at `path`, coerces sentiment_score → numeric,
-    and parses timestamp as datetime. If the file doesn’t exist yet,
-    returns an empty DataFrame with the correct four columns.
+    Read 'path' into a DataFrame. If missing, create an empty one
+    with the four expected columns.
     """
     if not os.path.exists(path):
-        # No file yet → create empty DataFrame with expected columns
+        # Create an empty DataFrame with exactly these four columns
         return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
 
     df = pd.read_csv(path, parse_dates=["timestamp"])
-    # Make sure sentiment_score is numeric
+    # Ensure 'sentiment_score' is numeric (coerce any stray strings to NaN)
     df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
     return df
 
@@ -35,24 +35,27 @@ df = load_data(CSV_FILE)
 
 # ─── 3) PAGE LAYOUT ─────────────────────────────────────────────────
 st.title("📊 AI Sentiment Dashboard")
-st.write("This shows the latest FinBERT sentiment score for each symbol.")
-st.write("Latest sentiment score per symbol (from your `update_sentiment.py`).")
+st.write("Latest FinBERT sentiment score per symbol (from your `update_sentiment.py`).")
 
+# If no CSV exists or it's empty, show an error and stop
 if not os.path.exists(CSV_FILE):
-    st.error("No sentiment_scores.csv found. Run `update_sentiment.py` first.")
-    st.stop()
-if df.empty:
-    st.error("No data found in sentiment_scores.csv yet. Run `update_sentiment.py` first.")
+    st.error("No sentiment_scores.csv found. Please run `update_sentiment.py` first.")
     st.stop()
 
-# ─── 4) GET THE MOST RECENT SCORE PER SYMBOL ───────────────────────
-# Sort by timestamp descending, then pick the first row for each symbol
+if df.empty:
+    st.error("`sentiment_scores.csv` is empty. Run `update_sentiment.py` again to populate it.")
+    st.stop()
+
+# ─── 4) EXTRACT THE MOST RECENT ROW PER SYMBOL ───────────────────────
+# Sort all rows by timestamp descending, then pick the first (latest) row for each symbol
 latest_rows = (
     df.sort_values("timestamp", ascending=False)
       .groupby("symbol", as_index=False)
       .first()
 )
-# latest_rows has columns: [symbol, timestamp, sentiment_score, num_texts]
+
+# Now latest_rows has exactly one row per symbol, with columns:
+#   ["symbol", "timestamp", "sentiment_score", "num_texts"]
 
 symbols = latest_rows["symbol"].tolist()
 scores  = latest_rows["sentiment_score"].astype(float).tolist()
@@ -60,7 +63,7 @@ scores  = latest_rows["sentiment_score"].astype(float).tolist()
 # ─── 5) BUILD & DISPLAY THE BAR CHART ─────────────────────────────
 fig, ax = plt.subplots(figsize=(12, 5))
 
-# Choose bar color: green if score >= 0, red if negative
+# Color bars green if sentiment >= 0, else red
 colors = ["green" if s >= 0 else "red" for s in scores]
 
 ax.bar(symbols, scores, color=colors)
@@ -68,9 +71,9 @@ ax.set_xlabel("Symbol")
 ax.set_ylabel("Sentiment Score")
 ax.set_title("Latest FinBERT Sentiment by Symbol")
 
-# Make y-axis symmetric around zero so the 0‐line is centered
+# Make y‐axis symmetric around zero, so the 0‐line is centered
 max_abs = max(abs(min(scores)), abs(max(scores)))
-margin  = max_abs * 0.1  # 10% headroom
+margin  = max_abs * 0.1  # add 10% headroom
 ax.set_ylim(-max_abs - margin, max_abs + margin)
 ax.axhline(0, color="gray", linestyle="--", linewidth=1)
 
@@ -81,5 +84,6 @@ st.pyplot(fig)
 
 # ─── 6) SHOW RAW DATA IF REQUESTED ─────────────────────────────────
 with st.expander("Show raw sentiment data"):
-    # Show the full DataFrame (sorted by timestamp descending, symbol ascending)
-    st.dataframe(df.sort_values(["timestamp", "symbol"], ascending=[False, True]), use_container_width=True)
+    # Display the full DataFrame, sorted by timestamp descending then symbol ascending
+    st.dataframe(df.sort_values(["timestamp", "symbol"], ascending=[False, True]),
+                 use_container_width=True)
