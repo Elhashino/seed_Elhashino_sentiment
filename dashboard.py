@@ -15,11 +15,25 @@ st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_data(path):
+    """
+    Load the CSV, normalize any "BTC-USD" → "BTCUSD", coerce sentiment_score to numeric,
+    and ensure timestamp is in datetime format.
+    """
     if not os.path.exists(path):
-        # If the CSV never existed yet, return an “empty” DataFrame with the correct columns
+        # If the CSV doesn’t exist yet, return an empty DataFrame with the expected columns
         return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
+    
+    # 2A) Read the CSV
     df = pd.read_csv(path, parse_dates=["timestamp"])
-    df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
+    
+    # 2B) Normalize ticker names: rename "BTC-USD" to "BTCUSD"
+    if "symbol" in df.columns:
+        df["symbol"] = df["symbol"].replace({"BTC-USD": "BTCUSD"})
+    
+    # 2C) Ensure sentiment_score is numeric
+    if "sentiment_score" in df.columns:
+        df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
+    
     return df
 
 CSV_FILE = "sentiment_scores.csv"
@@ -67,4 +81,9 @@ plt.tight_layout()
 st.pyplot(fig)
 
 with st.expander("Show raw sentiment data"):
-    st.dataframe(df.rename(columns={"sentiment_score": "score"}), use_container_width=True)
+    st.dataframe(
+        df.rename(columns={"sentiment_score": "score"}).sort_values(
+            ["timestamp", "symbol"], ascending=[False, True]
+        ),
+        use_container_width=True
+    )
