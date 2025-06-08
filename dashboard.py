@@ -16,10 +16,10 @@ st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 
 # ─── 2) LOAD & PREPROCESS ─────────────────────────────────────────
 @st.cache_data
-def load_data(path):
+def load_data(path, last_modified):
     """
     Read 'path' into a DataFrame. If missing, create an empty one
-    with the four expected columns.
+    with the four expected columns. Cache keyed on path + file mtime.
     """
     if not os.path.exists(path):
         # Create an empty DataFrame with exactly these four columns
@@ -31,7 +31,8 @@ def load_data(path):
     return df
 
 CSV_FILE = "sentiment_scores.csv"
-df = load_data(CSV_FILE)
+# Pass in the file's last‐modified timestamp so cache invalidates on changes
+df = load_data(CSV_FILE, os.path.getmtime(CSV_FILE) if os.path.exists(CSV_FILE) else None)
 
 # ─── 3) PAGE LAYOUT ─────────────────────────────────────────────────
 st.title("📊 AI Sentiment Dashboard")
@@ -56,7 +57,6 @@ latest_rows = (
 
 # Now latest_rows has exactly one row per symbol, with columns:
 #   ["symbol", "timestamp", "sentiment_score", "num_texts"]
-
 symbols = latest_rows["symbol"].tolist()
 scores  = latest_rows["sentiment_score"].astype(float).tolist()
 
@@ -85,5 +85,7 @@ st.pyplot(fig)
 # ─── 6) SHOW RAW DATA IF REQUESTED ─────────────────────────────────
 with st.expander("Show raw sentiment data"):
     # Display the full DataFrame, sorted by timestamp descending then symbol ascending
-    st.dataframe(df.sort_values(["timestamp", "symbol"], ascending=[False, True]),
-                 use_container_width=True)
+    st.dataframe(
+        df.sort_values(["timestamp", "symbol"], ascending=[False, True]),
+        use_container_width=True
+    )
