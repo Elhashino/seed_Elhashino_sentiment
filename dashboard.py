@@ -2,7 +2,8 @@
 # ───────────────────────────────────────────────────────────────────
 # A Streamlit app that reads “sentiment_scores.csv” (with columns
 #   timestamp,symbol,sentiment_score,num_texts)
-# and plots the latest FinBERT sentiment for each symbol as a bar chart.
+# and plots the latest FinBERT sentiment for each symbol as a bar chart,
+# with a variance band (±1 σ) on each bar.
 # ───────────────────────────────────────────────────────────────────
 
 import os
@@ -22,23 +23,22 @@ def load_data(path, last_modified):
     with the four expected columns. Cache keyed on path + file mtime.
     """
     if not os.path.exists(path):
-        # Create an empty DataFrame with exactly these four columns
         return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
 
     df = pd.read_csv(path, parse_dates=["timestamp"])
-    # Ensure 'sentiment_score' is numeric (coerce any stray strings to NaN)
     df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
     return df
 
 CSV_FILE = "sentiment_scores.csv"
-# Pass in the file's last‐modified timestamp so cache invalidates on changes
-df = load_data(CSV_FILE, os.path.getmtime(CSV_FILE) if os.path.exists(CSV_FILE) else None)
+df = load_data(
+    CSV_FILE,
+    os.path.getmtime(CSV_FILE) if os.path.exists(CSV_FILE) else None
+)
 
 # ─── 3) PAGE LAYOUT ─────────────────────────────────────────────────
 st.title("📊 AI Sentiment Dashboard")
 st.write("Latest FinBERT sentiment score per symbol (from your `update_sentiment.py`).")
 
-# If no CSV exists or it's empty, show an error and stop
 if not os.path.exists(CSV_FILE):
     st.error("No sentiment_scores.csv found. Please run `update_sentiment.py` first.")
     st.stop()
@@ -47,44 +47,46 @@ if df.empty:
     st.error("`sentiment_scores.csv` is empty. Run `update_sentiment.py` again to populate it.")
     st.stop()
 
-# ─── 4) EXTRACT THE MOST RECENT ROW PER SYMBOL ───────────────────────
-# Sort all rows by timestamp descending, then pick the first (latest) row for each symbol
-latest_rows = (
-    df.sort_values("timestamp", ascending=False)
-      .groupby("symbol", as_index=False)
-      .first()
+# ─── 4) AGGREGATE MEAN & STDDEV ────────────────────────────────────
+# Compute mean and standard deviation of sentiment_score per symbol
+agg = (
+    df.groupby("symbol")
+      .agg(
+          mean_score = ("sentiment_score", "mean"),
+          std_score  = ("sentiment_score", "std")
+      )
+      .reset_index()
 )
 
-# Now latest_rows has exactly one row per symbol, with columns:
-#   ["symbol", "timestamp", "sentiment_score", "num_texts"]
-symbols = latest_rows["symbol"].tolist()
-scores  = latest_rows["sentiment_score"].astype(float).tolist()
+symbols = agg["symbol"].tolist()
+means   = agg["mean_score"].tolist()
+stds    = agg["std_score"].fillna(0).tolist()
 
-# ─── 5) BUILD & DISPLAY THE BAR CHART ─────────────────────────────
+# ─── 5) BUILD & DISPLAY THE BAR CHART WITH ERROR BARS ─────────────
 fig, ax = plt.subplots(figsize=(12, 5))
 
-# Color bars green if sentiment >= 0, else red
-colors = ["green" if s >= 0 else "red" for s in scores]
+# Color bars green if mean ≥ 0, else red
+colors = ["green" if m >= 0 else "red" for m in means]
 
-ax.bar(symbols, scores, color=colors)
+# Plot bars at 'means' with ±1σ error bars from 'stds'
+ax.bar(symbols, means, yerr=stds, capsize=5, color=colors)
+
 ax.set_xlabel("Symbol")
 ax.set_ylabel("Sentiment Score")
-ax.set_title("Latest FinBERT Sentiment by Symbol")
+ax.set_title("Latest FinBERT Sentiment by Symbol (± 1σ)")
 
-# Make y‐axis symmetric around zero, so the 0‐line is centered
-max_abs = max(abs(min(scores)), abs(max(scores)))
-margin  = max_abs * 0.1  # add 10% headroom
+# Symmetric y-axis around zero
+max_abs = max(abs(min(means)), abs(max(means)))
+margin  = max_abs * 0.1
 ax.set_ylim(-max_abs - margin, max_abs + margin)
 ax.axhline(0, color="gray", linestyle="--", linewidth=1)
 
 plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
-
 st.pyplot(fig)
 
 # ─── 6) SHOW RAW DATA IF REQUESTED ─────────────────────────────────
 with st.expander("Show raw sentiment data"):
-    # Display the full DataFrame, sorted by timestamp descending then symbol ascending
     st.dataframe(
         df.sort_values(["timestamp", "symbol"], ascending=[False, True]),
         use_container_width=True
