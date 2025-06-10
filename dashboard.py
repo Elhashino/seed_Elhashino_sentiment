@@ -52,8 +52,8 @@ if df.empty:
 agg = (
     df.groupby("symbol")
       .agg(
-          mean_score = ("sentiment_score", "mean"),
-          std_score  = ("sentiment_score", "std")
+          mean_score=("sentiment_score", "mean"),
+          std_score =("sentiment_score", "std")
       )
       .reset_index()
 )
