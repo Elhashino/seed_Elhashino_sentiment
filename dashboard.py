@@ -12,15 +12,13 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 # ─── 1) PAGE CONFIG ────────────────────────────────────────────────
-# Must be the first Streamlit command in your script
 st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 
 # ─── 2) LOAD & PREPROCESS ─────────────────────────────────────────
-@st.cache_data
-def load_data(path, last_modified):
+def load_data(path):
     """
     Read 'path' into a DataFrame. If missing, create an empty one
-    with the four expected columns. Cache keyed on path + file mtime.
+    with the four expected columns.
     """
     if not os.path.exists(path):
         return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
@@ -30,10 +28,7 @@ def load_data(path, last_modified):
     return df
 
 CSV_FILE = "sentiment_scores.csv"
-df = load_data(
-    CSV_FILE,
-    os.path.getmtime(CSV_FILE) if os.path.exists(CSV_FILE) else None
-)
+df = load_data(CSV_FILE)
 
 # ─── 3) PAGE LAYOUT ─────────────────────────────────────────────────
 st.title("📊 AI Sentiment Dashboard")
@@ -48,7 +43,6 @@ if df.empty:
     st.stop()
 
 # ─── 4) AGGREGATE MEAN & STDDEV ────────────────────────────────────
-# Compute mean and standard deviation of sentiment_score per symbol
 agg = (
     df.groupby("symbol")
       .agg(
@@ -65,17 +59,13 @@ stds    = agg["std_score"].fillna(0).tolist()
 # ─── 5) BUILD & DISPLAY THE BAR CHART WITH ERROR BARS ─────────────
 fig, ax = plt.subplots(figsize=(12, 5))
 
-# Color bars green if mean ≥ 0, else red
 colors = ["green" if m >= 0 else "red" for m in means]
-
-# Plot bars at 'means' with ±1σ error bars from 'stds'
 ax.bar(symbols, means, yerr=stds, capsize=5, color=colors)
 
 ax.set_xlabel("Symbol")
 ax.set_ylabel("Sentiment Score")
 ax.set_title("Latest FinBERT Sentiment by Symbol (± 1σ)")
 
-# Symmetric y-axis around zero
 max_abs = max(abs(min(means)), abs(max(means)))
 margin  = max_abs * 0.1
 ax.set_ylim(-max_abs - margin, max_abs + margin)
