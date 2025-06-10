@@ -3,7 +3,8 @@
 # A Streamlit app that reads “sentiment_scores.csv” (with columns
 #   timestamp,symbol,sentiment_score,num_texts)
 # and plots the latest FinBERT sentiment for each symbol as a bar chart,
-# with a variance band (±1 σ) on each bar.
+# with a variance band (±1 σ) on each bar, plus explanatory key and
+# a reliability table underneath.
 # ───────────────────────────────────────────────────────────────────
 
 import os
@@ -22,7 +23,6 @@ def load_data(path):
     """
     if not os.path.exists(path):
         return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
-
     df = pd.read_csv(path, parse_dates=["timestamp"])
     df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
     return df
@@ -37,7 +37,6 @@ st.write("Latest FinBERT sentiment score per symbol (from your `update_sentiment
 if not os.path.exists(CSV_FILE):
     st.error("No sentiment_scores.csv found. Please run `update_sentiment.py` first.")
     st.stop()
-
 if df.empty:
     st.error("`sentiment_scores.csv` is empty. Run `update_sentiment.py` again to populate it.")
     st.stop()
@@ -58,7 +57,6 @@ stds    = agg["std_score"].fillna(0).tolist()
 
 # ─── 5) BUILD & DISPLAY THE BAR CHART WITH ERROR BARS ─────────────
 fig, ax = plt.subplots(figsize=(12, 5))
-
 colors = ["green" if m >= 0 else "red" for m in means]
 ax.bar(symbols, means, yerr=stds, capsize=5, color=colors)
 
@@ -75,9 +73,24 @@ plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
 st.pyplot(fig)
 
-# ─── 6) SHOW RAW DATA IF REQUESTED ─────────────────────────────────
-with st.expander("Show raw sentiment data"):
-    st.dataframe(
-        df.sort_values(["timestamp", "symbol"], ascending=[False, True]),
-        use_container_width=True
-    )
+# ─── 6) EXPLANATORY KEY ─────────────────────────────────────────────
+st.markdown(
+    "**🔎 How to read this chart:**  \n"
+    "- **Bars** = average sentiment (P₊ – P₋) for each symbol.  \n"
+    "- **Whiskers** = ±1 standard deviation (σ) around the mean, showing sentiment variability."
+)
+
+# ─── 7) SENTIMENT RELIABILITY TABLE ─────────────────────────────────
+rel = agg.copy()
+# compute a simple reliability metric = |mean| / (σ + small ε)
+rel["Reliability"] = rel["mean_score"].abs() / (rel["std_score"] + 1e-6)
+rel = rel[["symbol", "mean_score", "std_score", "Reliability"]].rename(
+    columns={
+        "symbol":      "Symbol",
+        "mean_score":  "Mean",
+        "std_score":   "σ (Std Dev)",
+    }
+)
+
+st.write("**Sentiment reliability by symbol:**")
+st.dataframe(rel, use_container_width=True, width=500)
