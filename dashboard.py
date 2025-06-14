@@ -1,13 +1,10 @@
 # dashboard.py
 # ───────────────────────────────────────────────────────────────────
-# A Streamlit app that reads “sentiment_scores.csv” (with columns
-#   timestamp,symbol,sentiment_score,num_texts)
-# and plots the latest FinBERT sentiment for each symbol as a bar chart,
-# with a variance band (±1 σ) on each bar, plus explanatory key and
-# a reliability table underneath.
+# A Streamlit app that fetches “sentiment_scores.csv” directly from
+# GitHub on every load, then plots mean ±1 σ sentiment per symbol,
+# with an explanatory key and reliability table underneath.
 # ───────────────────────────────────────────────────────────────────
 
-import os
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -15,30 +12,29 @@ import matplotlib.pyplot as plt
 # ─── 1) PAGE CONFIG ────────────────────────────────────────────────
 st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 
-# ─── 2) LOAD & PREPROCESS ─────────────────────────────────────────
-def load_data(path):
+# ─── 2) LIVE CSV FETCH ─────────────────────────────────────────────
+CSV_URL = (
+    "https://raw.githubusercontent.com/"
+    "Elhashino/seed_Elhashino_sentiment/"
+    "main/sentiment_scores.csv"
+)
+
+@st.cache_data(ttl=300)
+def load_data():
     """
-    Read 'path' into a DataFrame. If missing, create an empty one
-    with the four expected columns.
+    Fetch the remote CSV from GitHub, parse dates,
+    and coerce sentiment_score to numeric.
+    Cached for 5 minutes to avoid excessive GitHub hits.
     """
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=["timestamp", "symbol", "sentiment_score", "num_texts"])
-    df = pd.read_csv(path, parse_dates=["timestamp"])
+    df = pd.read_csv(CSV_URL, parse_dates=["timestamp"])
     df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
     return df
 
-CSV_FILE = "sentiment_scores.csv"
-df = load_data(CSV_FILE)
+df = load_data()
 
-# ─── 3) PAGE LAYOUT ─────────────────────────────────────────────────
-st.title("📊 AI Sentiment Dashboard")
-st.write("Latest FinBERT sentiment score per symbol (from your `update_sentiment.py`).")
-
-if not os.path.exists(CSV_FILE):
-    st.error("No sentiment_scores.csv found. Please run `update_sentiment.py` first.")
-    st.stop()
+# ─── 3) DATA CHECK ──────────────────────────────────────────────────
 if df.empty:
-    st.error("`sentiment_scores.csv` is empty. Run `update_sentiment.py` again to populate it.")
+    st.error("No data found at the GitHub CSV URL. Please check your updater.")
     st.stop()
 
 # ─── 4) AGGREGATE MEAN & STDDEV ────────────────────────────────────
@@ -82,7 +78,6 @@ st.markdown(
 
 # ─── 7) SENTIMENT RELIABILITY TABLE ─────────────────────────────────
 rel = agg.copy()
-# compute a simple reliability metric = |mean| / (σ + small ε)
 rel["Reliability"] = rel["mean_score"].abs() / (rel["std_score"] + 1e-6)
 rel = rel[["symbol", "mean_score", "std_score", "Reliability"]].rename(
     columns={
