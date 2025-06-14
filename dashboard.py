@@ -2,7 +2,7 @@
 # ───────────────────────────────────────────────────────────────────
 # A Streamlit app that fetches “sentiment_scores.csv” directly from
 # GitHub on every load, then plots mean ±1 σ sentiment per symbol,
-# with an explanatory key and reliability table underneath.
+# with an explanatory key, “last updated” stamp, and reliability table.
 # ───────────────────────────────────────────────────────────────────
 
 import pandas as pd
@@ -12,19 +12,18 @@ import matplotlib.pyplot as plt
 # ─── 1) PAGE CONFIG ────────────────────────────────────────────────
 st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
 
-# ─── 2) LIVE CSV FETCH ─────────────────────────────────────────────
+# ─── 2) LIVE CSV FETCH (no long cache) ──────────────────────────────
 CSV_URL = (
     "https://raw.githubusercontent.com/"
     "Elhashino/seed_Elhashino_sentiment/"
     "main/sentiment_scores.csv"
 )
 
-@st.cache_data(ttl=300)
 def load_data():
     """
     Fetch the remote CSV from GitHub, parse dates,
     and coerce sentiment_score to numeric.
-    Cached for 5 minutes to avoid excessive GitHub hits.
+    Always re-runs on each Streamlit reload.
     """
     df = pd.read_csv(CSV_URL, parse_dates=["timestamp"])
     df["sentiment_score"] = pd.to_numeric(df["sentiment_score"], errors="coerce")
@@ -32,12 +31,16 @@ def load_data():
 
 df = load_data()
 
-# ─── 3) DATA CHECK ──────────────────────────────────────────────────
+# ─── 3) SHOW LAST-UPDATED TIMESTAMP ────────────────────────────────
+latest_time = df["timestamp"].max()
+st.write(f"**Last updated:** {latest_time:%Y-%m-%d %H:%M:%S} UTC")
+
+# ─── 4) DATA CHECK ──────────────────────────────────────────────────
 if df.empty:
     st.error("No data found at the GitHub CSV URL. Please check your updater.")
     st.stop()
 
-# ─── 4) AGGREGATE MEAN & STDDEV ────────────────────────────────────
+# ─── 5) AGGREGATE MEAN & STDDEV ────────────────────────────────────
 agg = (
     df.groupby("symbol")
       .agg(
@@ -51,7 +54,7 @@ symbols = agg["symbol"].tolist()
 means   = agg["mean_score"].tolist()
 stds    = agg["std_score"].fillna(0).tolist()
 
-# ─── 5) BUILD & DISPLAY THE BAR CHART WITH ERROR BARS ─────────────
+# ─── 6) BUILD & DISPLAY THE BAR CHART WITH ERROR BARS ─────────────
 fig, ax = plt.subplots(figsize=(12, 5))
 colors = ["green" if m >= 0 else "red" for m in means]
 ax.bar(symbols, means, yerr=stds, capsize=5, color=colors)
@@ -69,14 +72,14 @@ plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
 st.pyplot(fig)
 
-# ─── 6) EXPLANATORY KEY ─────────────────────────────────────────────
+# ─── 7) EXPLANATORY KEY ─────────────────────────────────────────────
 st.markdown(
     "**🔎 How to read this chart:**  \n"
     "- **Bars** = average sentiment (P₊ – P₋) for each symbol.  \n"
     "- **Whiskers** = ±1 standard deviation (σ) around the mean, showing sentiment variability."
 )
 
-# ─── 7) SENTIMENT RELIABILITY TABLE ─────────────────────────────────
+# ─── 8) SENTIMENT RELIABILITY TABLE ─────────────────────────────────
 rel = agg.copy()
 rel["Reliability"] = rel["mean_score"].abs() / (rel["std_score"] + 1e-6)
 rel = rel[["symbol", "mean_score", "std_score", "Reliability"]].rename(
