@@ -36,6 +36,14 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Ensure we’re up-to-date with remote before pushing
+          git fetch origin main
+          git pull --rebase origin main || echo "No remote changes to rebase"
+
+          # Stage & commit the CSV
           git add -f sentiment_scores.csv
           git commit -m "hourly: update sentiment CSV" || echo "No changes to commit"
-          git push
+
+          # Push back to main
+          git push origin main
