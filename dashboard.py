@@ -1,18 +1,18 @@
 # dashboard.py
-# ───────────────────────────────────────────────────────────────────
-# Fetches “sentiment_scores.csv” live from GitHub, plots mean ±1σ
-# sentiment per symbol, then shows an optional “Last updated” stamp,
-# explanatory key, and a reliability table—all without error.
-# ───────────────────────────────────────────────────────────────────
 
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from streamlit_autorefresh import st_autorefresh
 
 # ─── 1) PAGE CONFIG ────────────────────────────────────────────────
-st.set_page_config(page_title="AI Sentiment Dashboard", layout="wide")
+st.set_page_config(page_title="Hourly AI Sentiment Dashboard", layout="wide")
 
-# ─── 2) LIVE CSV FETCH ─────────────────────────────────────────────
+# ─── 2) AUTO-REFRESH EVERY MINUTE ──────────────────────────────────
+# (interval in milliseconds)
+st_autorefresh(interval=60 * 1000, key="auto_refresh")
+
+# ─── 3) DATA LOADING (no cache!) ───────────────────────────────────
 CSV_URL = (
     "https://raw.githubusercontent.com/"
     "Elhashino/seed_Elhashino_sentiment/"
@@ -20,77 +20,83 @@ CSV_URL = (
 )
 
 def load_data():
-    """
-    Read the remote CSV, coerce timestamp to datetime,
-    and sentiment_score to numeric. Returns a DataFrame.
-    """
     df = pd.read_csv(CSV_URL)
-    # Safely parse timestamp column (if present)
+    # parse timestamps & scores
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    # Ensure sentiment_score numeric
     df["sentiment_score"] = pd.to_numeric(df.get("sentiment_score", []), errors="coerce")
-    return df
+    return df.dropna(subset=["timestamp", "sentiment_score"])
 
 df = load_data()
 
-# ─── 3) OPTIONAL LAST-UPDATED STAMP ────────────────────────────────
-if "timestamp" in df.columns and df["timestamp"].notna().any():
-    latest_time = df["timestamp"].max()
-    st.write(f"**Last updated:** {latest_time:%Y-%m-%d %H:%M:%S} UTC")
-
 # ─── 4) DATA CHECK ──────────────────────────────────────────────────
-if df.empty or "sentiment_score" not in df.columns:
-    st.error("No valid data—please check that your CSV exists and has the right columns.")
+if df.empty or "symbol" not in df.columns:
+    st.error("🚨 No data available or missing `symbol`/`timestamp` columns.")
     st.stop()
 
-# ─── 5) AGGREGATE MEAN & STDDEV ────────────────────────────────────
-agg = (
-    df.groupby("symbol", as_index=False)
-      .agg(
-          mean_score=("sentiment_score", "mean"),
-          std_score =("sentiment_score", "std")
-      )
+# ─── 5) AGGREGATE HOURLY ────────────────────────────────────────────
+df["hour"] = df["timestamp"].dt.floor("H")
+hourly = (
+    df
+    .groupby(["symbol", "hour"], as_index=False)
+    .agg(
+        mean_score=("sentiment_score", "mean"),
+        std_score =("sentiment_score", "std")
+    )
 )
 
-symbols = agg["symbol"].tolist()
-means   = agg["mean_score"].tolist()
-stds    = agg["std_score"].fillna(0).tolist()
+# ─── 6) LATEST HOUR VIEW ───────────────────────────────────────────
+latest_hour = hourly["hour"].max()
+latest = hourly[hourly["hour"] == latest_hour].copy()
+latest = latest.sort_values("mean_score", ascending=False)
 
-# ─── 6) PLOT BAR CHART + ERROR BARS ────────────────────────────────
+st.markdown(f"## Sentiment for **{latest_hour:%Y-%m-%d %H:00} UTC** (± 1 σ)")
+
+# Bar chart for the latest hour
 fig, ax = plt.subplots(figsize=(12, 5))
-colors = ["green" if m >= 0 else "red" for m in means]
-ax.bar(symbols, means, yerr=stds, capsize=5, color=colors)
-
+colors = ["green" if m >= 0 else "red" for m in latest["mean_score"]]
+ax.bar(latest["symbol"], latest["mean_score"], yerr=latest["std_score"].fillna(0),
+       capsize=4, color=colors)
+ax.axhline(0, color="gray", linestyle="--", linewidth=1)
 ax.set_xlabel("Symbol")
 ax.set_ylabel("Sentiment Score")
-ax.set_title("Latest FinBERT Sentiment by Symbol (± 1σ)")
-
-max_abs = max(abs(min(means)), abs(max(means)))
-margin  = max_abs * 0.1
-ax.set_ylim(-max_abs - margin, max_abs + margin)
-ax.axhline(0, color="gray", linestyle="--", linewidth=1)
-
+ax.set_ylim(
+    -max(abs(latest["mean_score"].max()), abs(latest["mean_score"].min())) * 1.1,
+     max(abs(latest["mean_score"].max()), abs(latest["mean_score"].min())) * 1.1
+)
 plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
-
 st.pyplot(fig)
 
-# ─── 7) EXPLANATORY KEY ─────────────────────────────────────────────
 st.markdown(
-    "**🔎 How to read this chart:**  \n"
-    "- **Bars** = average sentiment (P₊ – P₋) for each symbol.  \n"
-    "- **Whiskers** = ±1 standard deviation (σ) around the mean (sentiment variability)."
+    "**Legend:**  \n"
+    "- **Bar** = mean hourly sentiment (P₊ – P₋)  \n"
+    "- **Whiskers** = ±1 standard deviation (σ)  \n"
 )
 
+# ─── 7) OPTIONAL 24 H TREND ────────────────────────────────────────
+if st.checkbox("Show last 24 hours trend by symbol"):
+    last_24 = hourly[hourly["hour"] >= (latest_hour - pd.Timedelta(hours=23))]
+    fig2, ax2 = plt.subplots(figsize=(12, 5))
+    for sym in last_24["symbol"].unique():
+        series = last_24[last_24["symbol"] == sym]
+        ax2.plot(series["hour"], series["mean_score"], label=sym)
+    ax2.axhline(0, color="gray", linestyle="--", linewidth=1)
+    ax2.set_xlabel("Hour (UTC)")
+    ax2.set_ylabel("Mean Sentiment")
+    ax2.set_title("24 Hour Sentiment Trend")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    st.pyplot(fig2)
+    st.legend(loc="upper right")
+
 # ─── 8) RELIABILITY TABLE ──────────────────────────────────────────
-rel = agg.copy()
+rel = latest.copy()
 rel["Reliability"] = rel["mean_score"].abs() / (rel["std_score"] + 1e-6)
 rel = rel.rename(columns={
     "symbol":      "Symbol",
-    "mean_score":  "Mean",
-    "std_score":   "σ (Std Dev)",
+    "mean_score":  "Mean Score",
+    "std_score":   "Std Dev",
 })
-
-st.write("**Sentiment reliability by symbol:**")
-st.dataframe(rel, use_container_width=True, width=500)
+st.markdown("### Reliability of Latest Hourly Estimates")
+st.dataframe(rel[["Symbol", "Mean Score", "Std Dev", "Reliability"]], use_container_width=True)
