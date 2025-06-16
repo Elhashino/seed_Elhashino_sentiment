@@ -1,33 +1,41 @@
-name: Update Sentiment Scores
+name: 🔄 Update sentiment CSV
 
-# Run every hour on the hour, plus manual trigger
+# 1) Run on a schedule (every hour) and also manually via “Run workflow” button
 on:
   schedule:
-    - cron:  '0 * * * *'
+    # at minute 0 of every hour UTC
+    - cron: '0 * * * *'
   workflow_dispatch:
+
+# 2) Grant write access so we can push updated CSV back
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repo
+      # 3a) Check out your code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
+      # 3b) Install Python and dependencies
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-
-      - name: Install dependencies
+          python-version: '3.9'    # or whichever you need
+      - name: Install requirements
         run: pip install --upgrade pip && pip install -r requirements.txt
 
+      # 3c) Run your sentiment-update script
       - name: Run update_sentiment.py
         run: python update_sentiment.py
 
-      # Commit & push updated CSV back to main
-      - name: Commit CSV
-        uses: stefanzweifel/git-auto-commit-action@v4
+      # 3d) Commit & push any changes to sentiment_scores.csv
+      - name: Commit and push CSV
+        uses: EndBug/add-and-commit@v9
         with:
-          commit_message: "ci: auto-update sentiment_scores.csv"
-          file_pattern: sentiment_scores.csv
+          author_name: github-actions
+          author_email: actions@github.com
+          message: "chore: automated sentiment update [skip ci]"
+          add: 'sentiment_scores.csv'
