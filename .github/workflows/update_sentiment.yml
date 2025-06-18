@@ -1,41 +1,38 @@
-name: 🔄 Update sentiment CSV
+name: hourly sentiment update
 
-# 1) Run on a schedule (every hour) and also manually via “Run workflow” button
 on:
   schedule:
-    # at minute 0 of every hour UTC
-    - cron: '0 * * * *'
-  workflow_dispatch:
-
-# 2) Grant write access so we can push updated CSV back
-permissions:
-  contents: write
+    - cron: '0 * * * *'     # at minute 0 past every hour
+  workflow_dispatch:       # manual trigger
 
 jobs:
-  build:
+  update:
     runs-on: ubuntu-latest
-    steps:
-      # 3a) Check out your code
-      - name: Checkout repo
-        uses: actions/checkout@v3
 
-      # 3b) Install Python and dependencies
-      - name: Set up Python
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
+
+      - name: set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'    # or whichever you need
-      - name: Install requirements
-        run: pip install --upgrade pip && pip install -r requirements.txt
+          python-version: '3.10'
 
-      # 3c) Run your sentiment-update script
-      - name: Run update_sentiment.py
+      - name: install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: run update_sentiment.py
         run: python update_sentiment.py
 
-      # 3d) Commit & push any changes to sentiment_scores.csv
-      - name: Commit and push CSV
-        uses: EndBug/add-and-commit@v9
+      - name: commit updated CSV
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add sentiment_hourly.csv
+          git diff --cached --quiet || git commit -m "chore: hourly sentiment update"
+
+      - name: push changes
+        uses: ad-m/github-push-action@v0.6.0
         with:
-          author_name: github-actions
-          author_email: actions@github.com
-          message: "chore: automated sentiment update [skip ci]"
-          add: 'sentiment_scores.csv'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
