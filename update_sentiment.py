@@ -1,43 +1,69 @@
+#!/usr/bin/env python3
 import pandas as pd
-from datetime import datetime, timedelta
-from sentiment_utils import get_finbert_sentiment  # your existing helper
-import os
+import numpy as np
+from datetime import datetime, timezone
+import feedparser
+from bs4 import BeautifulSoup
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 
-# 10 symbols we track
-SYMBOLS = ["AAPL","AUDUSD","BTCUSD","CL","EURUSD","GBPUSD","SPY","USDCAD","USDJPY","XAUUSD"]
-OUT_CSV = "sentiment_hourly.csv"
+# 10 symbols → set your actual RSS/HTML feed URLs here
+SYMBOL_FEEDS = {
+    "AAPL":   "https://apple.news/apple-events.rss",
+    "AUDUSD": "https://www.fxstreet.com/rss/news",
+    "BTCUSD": "https://news.bitcoin.com/feed/",
+    "CL":     "https://www.investing.com/rss/news_902.rss",
+    "EURUSD": "https://www.fxstreet.com/rss/news",
+    "GBPUSD": "https://www.fxstreet.com/rss/news",
+    "SPY":    "https://www.marketwatch.com/rss/marketpulse",
+    "USDCAD": "https://www.fxstreet.com/rss/news",
+    "USDJPY": "https://www.fxstreet.com/rss/news",
+    "XAUUSD": "https://goldnews.com/feed"
+}
 
-def load_existing():
-    if os.path.exists(OUT_CSV):
-        df = pd.read_csv(OUT_CSV, parse_dates=["timestamp"])
-    else:
-        df = pd.DataFrame(columns=["timestamp","symbol","sentiment_score"])
-    return df
+def fetch_texts(feed_url, max_items=10):
+    d = feedparser.parse(feed_url)
+    texts = []
+    for entry in d.entries[:max_items]:
+        snippet = entry.get("summary", entry.get("title", ""))
+        texts.append(BeautifulSoup(snippet, "html.parser").get_text())
+    return texts
+
+def compute_score(texts, tokenizer, model):
+    scores = []
+    for t in texts:
+        inputs = tokenizer(t, truncation=True, padding=True, return_tensors="pt")
+        with torch.no_grad():
+            logits = model(**inputs).logits
+        probs = torch.softmax(logits, dim=1)[0]
+        # FinBERT: idx0=neg, idx2=pos
+        scores.append(probs[2].item() - probs[0].item())
+    return np.mean(scores) if scores else np.nan
 
 def main():
-    df = load_existing()
-    # find the last‐written hour (or 2 hrs ago if new)
-    if not df.empty:
-        last_ts = df["timestamp"].max()
-    else:
-        last_ts = datetime.utcnow() - timedelta(hours=2)
-    # round up to the next hour boundary
-    next_hour = (pd.to_datetime(last_ts) + timedelta(hours=1)).replace(
-        minute=0, second=0, microsecond=0
-    )
-    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
-    # how many hours to catch up?
-    n_hours = int((now - next_hour) / timedelta(hours=1)) + 1
-    for i in range(max(n_hours, 0)):
-        ts = next_hour + timedelta(hours=i)
-        for sym in SYMBOLS:
-            score = get_finbert_sentiment(sym, ts)
-            df = pd.concat(
-                [df, pd.DataFrame([{"timestamp": ts, "symbol": sym, "sentiment_score": score}])],
-                ignore_index=True,
-            )
-    df.to_csv(OUT_CSV, index=False)
+    # load FinBERT once
+    tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-pretrain")
+    model     = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-pretrain")
 
+    # current UTC‐hour timestamp
+    ts = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+
+    rows = []
+    for sym, url in SYMBOL_FEEDS.items():
+        texts = fetch_texts(url)
+        score = compute_score(texts, tokenizer, model)
+        rows.append({"timestamp": ts, "symbol": sym, "score": score})
+
+    df_new = pd.DataFrame(rows)
+    csv_path = "sentiment.csv"
+
+    try:
+        df_old = pd.read_csv(csv_path)
+        df = pd.concat([df_old, df_new], ignore_index=True)
+    except FileNotFoundError:
+        df = df_new
+
+    df.to_csv(csv_path, index=False)
 
 if __name__ == "__main__":
     main()
