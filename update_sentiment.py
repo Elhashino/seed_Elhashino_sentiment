@@ -1,69 +1,90 @@
-#!/usr/bin/env python3
+import os
 import pandas as pd
-import numpy as np
-from datetime import datetime, timezone
-import feedparser
-from bs4 import BeautifulSoup
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from datetime import datetime
 import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 
-# 10 symbols → set your actual RSS/HTML feed URLs here
-SYMBOL_FEEDS = {
-    "AAPL":   "https://apple.news/apple-events.rss",
-    "AUDUSD": "https://www.fxstreet.com/rss/news",
-    "BTCUSD": "https://news.bitcoin.com/feed/",
-    "CL":     "https://www.investing.com/rss/news_902.rss",
-    "EURUSD": "https://www.fxstreet.com/rss/news",
-    "GBPUSD": "https://www.fxstreet.com/rss/news",
-    "SPY":    "https://www.marketwatch.com/rss/marketpulse",
-    "USDCAD": "https://www.fxstreet.com/rss/news",
-    "USDJPY": "https://www.fxstreet.com/rss/news",
-    "XAUUSD": "https://goldnews.com/feed"
-}
+# ——— CONFIG ———
+SYMBOLS = [
+    "AAPL","AUDUSD","BTCUSD","CL","EURUSD",
+    "GBPUSD","SPY","USDCAD","USDJPY","XAUUSD",
+]
+CSV_FILE = "sentiment_scores.csv"
 
-def fetch_texts(feed_url, max_items=10):
-    d = feedparser.parse(feed_url)
-    texts = []
-    for entry in d.entries[:max_items]:
-        snippet = entry.get("summary", entry.get("title", ""))
-        texts.append(BeautifulSoup(snippet, "html.parser").get_text())
-    return texts
 
-def compute_score(texts, tokenizer, model):
+def load_news_for(symbol):
+    """
+    Replace this with your real scraping / RSS‐parsing logic.
+    For example you might read from data/news_{symbol}.txt
+    """
+    path = f"data/news_{symbol}.txt"
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def get_nlp_pipeline():
+    # switch to a FinBERT model that actually has a classification head
+    model_name = "ProsusAI/finbert"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model     = AutoModelForSequenceClassification.from_pretrained(model_name)
+    return pipeline(
+        "sentiment-analysis",
+        model=model,
+        tokenizer=tokenizer,
+        return_all_scores=True
+    )
+
+
+def compute_score(texts, nlp):
     scores = []
-    for t in texts:
-        inputs = tokenizer(t, truncation=True, padding=True, return_tensors="pt")
-        with torch.no_grad():
-            logits = model(**inputs).logits
-        probs = torch.softmax(logits, dim=1)[0]
-        # FinBERT: idx0=neg, idx2=pos
-        scores.append(probs[2].item() - probs[0].item())
-    return np.mean(scores) if scores else np.nan
+    for txt in texts:
+        try:
+            out = nlp(txt)[0]  # a list of dicts: [{'label':'NEG',...}, {'label':'NEU',...}, ...]
+            # map label→score
+            d = { item["label"].lower(): item["score"] for item in out }
+            # subtract negative from positive (ignore neutral if present)
+            pos = d.get("positive", 0.0)
+            neg = d.get("negative", 0.0)
+            scores.append(pos - neg)
+        except Exception as e:
+            print(f"Error scoring “{txt[:30]}…”: {e}")
+            # skip or append zero
+    return scores
+
 
 def main():
-    # load FinBERT once
-    tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-pretrain")
-    model     = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-pretrain")
+    # load old CSV or make new DataFrame
+    if os.path.exists(CSV_FILE):
+        df = pd.read_csv(CSV_FILE, parse_dates=["timestamp"])
+    else:
+        df = pd.DataFrame(columns=["symbol", "timestamp", "score"])
 
-    # current UTC‐hour timestamp
-    ts = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+    nlp = get_nlp_pipeline()
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 
-    rows = []
-    for sym, url in SYMBOL_FEEDS.items():
-        texts = fetch_texts(url)
-        score = compute_score(texts, tokenizer, model)
-        rows.append({"timestamp": ts, "symbol": sym, "score": score})
+    new_rows = []
+    for sym in SYMBOLS:
+        texts = load_news_for(sym)
+        if not texts:
+            continue
+        scs = compute_score(texts, nlp)
+        for s in scs:
+            new_rows.append({
+                "symbol":    sym,
+                "timestamp": now,
+                "score":     s
+            })
 
-    df_new = pd.DataFrame(rows)
-    csv_path = "sentiment.csv"
+    if new_rows:
+        new_df = pd.DataFrame(new_rows)
+        df = pd.concat([df, new_df], ignore_index=True)
+        df.to_csv(CSV_FILE, index=False)
+        print(f"Appended {len(new_rows)} rows for {now}")
+    else:
+        print("No new data to append.")
 
-    try:
-        df_old = pd.read_csv(csv_path)
-        df = pd.concat([df_old, df_new], ignore_index=True)
-    except FileNotFoundError:
-        df = df_new
-
-    df.to_csv(csv_path, index=False)
 
 if __name__ == "__main__":
     main()
