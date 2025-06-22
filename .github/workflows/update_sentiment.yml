@@ -2,21 +2,22 @@ name: hourly sentiment update
 
 on:
   schedule:
-    - cron: '0 * * * *'        # top of every UTC hour
-  workflow_dispatch:           # manual trigger
+    - cron: '0 * * * *'     # run at the top of every hour
+  workflow_dispatch:        # also allow manual runs
 
 jobs:
   update:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
@@ -26,14 +27,17 @@ jobs:
       - name: Run sentiment update
         run: python update_sentiment.py
 
-      - name: Commit and push updated CSV
+      - name: Commit & push updated CSV
+        shell: bash
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add sentiment.csv
-          if git diff --cached --exit-code; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore: hourly sentiment update"
-            git push
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # stage only if it changed
+          git add sentiment_scores.csv
+
+          # only commit if there are changes
+          git diff --cached --exit-code \
+            || git commit -m "chore: hourly update of sentiment_scores.csv"
+
+          git push origin main
